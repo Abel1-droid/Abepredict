@@ -1,14 +1,61 @@
-name: Build Abepredict APK
+name: Abepredict CI and Android Build
 
 on:
   workflow_dispatch:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: "0 3 * * *"
+
+permissions:
+  contents: read
 
 jobs:
-  build:
-    runs-on: ubuntu-22.04
+  python-checks:
+    name: Python Tests and Source ZIP
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-ci.txt
+
+      - name: Run tests
+        run: python -m pytest -q
+
+      - name: Check Python syntax
+        run: python -m compileall -q predictor.py fixture_sync.py main.py
+
+      - name: Create source ZIP
+        run: |
+          zip -r Abepredict-source.zip . \
+            -x ".git/*" ".buildozer/*" "bin/*" "data/*" \
+            "__pycache__/*" ".pytest_cache/*" "*.pyc" \
+            "Abepredict-source.zip"
+
+      - name: Upload source ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: Abepredict-Source-ZIP
+          path: Abepredict-source.zip
+          if-no-files-found: error
+
+  android-build:
+    name: Build Android APK
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - name: Checkout project
@@ -18,19 +65,26 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: "17"
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.14"
 
-      - name: Install build dependencies
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git zip unzip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev cmake libffi-dev libssl-dev
-          pip install --upgrade pip
-          pip install buildozer cython==0.29.36
+          sudo apt-get install -y git zip unzip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo6 cmake libffi-dev libssl-dev automake autopoint gettext
+
+      - name: Install Buildozer
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install git+https://github.com/kivy/buildozer
+          python -m pip install legacy-cgi setuptools cython==0.29.34
 
       - name: Build Android APK
         run: buildozer android debug
